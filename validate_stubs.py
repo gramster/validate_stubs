@@ -62,10 +62,11 @@ def gather(name: str, m: Any):
     items: the list of discovered items
     """
     
-    def _gather(name, m, root, fpath, completed, items):
+    def _gather(mpath, name, m, root, fpath, completed, items):
         """
         Parameters:
-        name: module name
+        mpath: module path (e.g. pandas.core)
+        name: module name (e.g. core)
         m: module object
         root: package path
         fpath: module path relative to root
@@ -80,7 +81,7 @@ def gather(name: str, m: Any):
                 continue
             try:
                 # Make sure it came from this module
-                if v.__dict__['__module__'] != name:
+                if v.__dict__['__module__'] != mpath:
                     continue
             except:
                 pass
@@ -122,7 +123,7 @@ def gather(name: str, m: Any):
                 fpath = fpath[len(root)+1:]
                 members = dict()
                 items['m:' + k] = members 
-                _gather(k, v, root, fpath, completed, members)
+                _gather(name + '.' + k, k, v, root, fpath, completed, members)
             except:
                 pass
 
@@ -130,17 +131,22 @@ def gather(name: str, m: Any):
     root = fpath[:fpath.rfind('/')]  # fix for windows
     members = dict()
     items = {'m:' + name: members}
-    _gather(name, m, root, fpath, set(), members)
+    _gather(name, name, m, root, fpath, set(), members)
     return items
 
 
-def walk(tree, fn, *args, name=None):
+def walk(tree: dict, fn, *args, delete_on_fail=False, name=None):
     if name is None:
         name=''
+    to_clean = []
     for k, v in tree.items():
-        fn(name, k, v, *args)
-        if isinstance(v, dict):
-            walk(v, fn, *args, name=name + '/' + k)
+        if fn(name, k, v, *args) and delete_on_fail:
+            to_clean.append(k)
+        elif isinstance(v, dict):
+            walk(v, fn, *args, delete_on_fail=delete_on_fail, name=name + '/' + k)
+    for k in to_clean:
+        print(f'Removing {k} from {name}')
+        tree.pop(k)
         
 
 def compare(name: str, stubpath: str):
@@ -152,7 +158,7 @@ def compare(name: str, stubpath: str):
     
     def has_module(path, name, node, stubs):
         if not name.startswith('m:'):
-            return
+            return False
         components = path.split('/')[1:]
         components.append(name)
         for c in components:
@@ -161,9 +167,14 @@ def compare(name: str, stubpath: str):
             else:
                 modname = '.'.join([c[2:] for c in components])
                 print(f"No module {modname} in stubs")
-                break
-                
-    walk(real, has_module, stub)
+                # TODO: we could generate a skeleton stub file here
+                # Remove this module from further consideration
+                return True
+        return False
+
+
+    walk(real, has_module, stub, delete_on_fail=True)
+    print(real.keys())
         
 
 if __name__ == "__main__":
