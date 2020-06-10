@@ -165,6 +165,88 @@ def walk(tree: dict, fn, *args, postproc=None, path=None):
         postproc(tree, to_postproc)
         
 
+def collect_items(root):
+
+    def _collect(path, name, node, functions, classes):
+        if name.startswith('c:'):
+            classes.append(node)
+            return True  # Don't recurse
+        elif name.startswith('f:'):
+            functions.append(node)
+
+    functions = []
+    classes = []
+    walk(root, _collect, functions, classes)
+    functions = sorted(functions, key=attrgetter('name'))
+    #classes = sorted(classes, key=attrgetter('name'))
+    return functions, classes
+
+
+def match_pairs(real, stub, label, owner=''):
+    i_r = 0
+    i_s = 0
+    while i_r < len(real) or i_s < len(stub):
+        if i_r == len(real) or (i_s < len(stub) and real[i_r].name > stub[i_s].name):
+            fn = stub[i_s]
+            print(f"No match for stub {label} {fn.module}.{owner}{fn.name}")
+            i_s += 1
+        elif i_s == len(stub) or real[i_r].name < stub[i_s].name:
+            fn = real[i_r]
+            print(f"No stub for {label} {fn.module}.{owner}{fn.name}")
+            i_r += 1
+        else:
+            # TODO: Check for uniqueness
+            stub[i_s].analog = real[i_r]            
+            real[i_r].analog = stub[i_s]
+            i_s += 1
+            i_r += 1
+
+
+def compare_functions(real, stub, owner=None):
+    if owner is None:
+        owner = ''
+    else:
+        owner += '.'
+    match_pairs(real, stub, 'function', owner)
+
+    # For the functions that do have analogs, compare the 
+    # signatures.
+    i_s = 0
+    while i_s < len(stub):
+        s = stub[i_s]
+        a = s.analog
+        if a:
+            try:
+                sc = s.object_.__code__.co_argcount
+                ac = a.object_.__code__.co_argcount
+                if sc != ac:
+                    print(f"Mismatched argument count for {s.module}.{owner}{s.name}: stub has {sc} but real has {ac}")
+                else:
+                    sa = s.object_.__code__.co_varnames
+                    aa = a.object_.__code__.co_varnames
+                    if sa != aa:
+                        print(f"Mismatched argument names for {s.module}.{owner}{s.name}: stub has {sa} but real has {aa}")
+                    else:
+                         print(f"{s.module}.{owner}{s.name} passes argument checks")
+            except Exception as e:
+                print(f"Failed to validate {s.module}.{owner}{s.name}: {e}")
+
+        i_s += 1
+
+
+def compare_classes(real, stub, owner=None):
+    match_pairs(real, stub, 'class')
+    # For the classes that do have analogs, compare the 
+    # methods.
+    i_s = 0
+    while i_s < len(stub):
+        s = stub[i_s]
+        a = s.analog
+        real_functions, _ = collect_items(a)
+        stub_functions, _ = collect_items(s)
+        compare_functions(real_functions, stub_functions, s.name)
+
+
 def compare(name: str, stubpath: str):
     real, stub = import_dual(name, stubpath)
     real = gather(name, real)
@@ -190,66 +272,15 @@ def compare(name: str, stubpath: str):
     # Collect all top-level functions and then print out the
     # ones that don't have analogs in the stubs, and vice-versa.
 
-    def collect_functions(path, name, node, functions):
-        if name.startswith('c:'):
-            return True  # Don't recurse
-        elif name.startswith('f:'):
-            functions.append(node)
+    real_functions, real_classes = collect_items(real)
+    stub_functions, stub_classes = collect_items(stub)
+    compare_functions(real_functions, stub_functions)
+    #compare_classes(real_classes, stub_classes)
 
-    real_functions = []
-    walk(real, collect_functions, real_functions)
-    real_functions = sorted(real_functions, key=attrgetter('name'))
-    stub_functions = []
-    walk(stub, collect_functions, stub_functions)
-    stub_functions = sorted(stub_functions, key=attrgetter('name'))
-
-    i_r = 0
-    i_s = 0
-    while i_r < len(real_functions) or i_s < len(stub_functions):
-        if i_r == len(real_functions) or (i_s < len(stub_functions) and real_functions[i_r].name > stub_functions[i_s].name):
-            fn = stub_functions[i_s]
-            print(f"No match for stub function {fn.module}.{fn.name}")
-            i_s += 1
-        elif i_s == len(stub_functions) or real_functions[i_r].name < stub_functions[i_s].name:
-            fn = real_functions[i_r]
-            print(f"No stub for function {fn.module}.{fn.name}")
-            i_r += 1
-        else:
-            # TODO: Check for uniqueness
-            stub_functions[i_s].analog = real_functions[i_r]            
-            real_functions[i_r].analog = stub_functions[i_s]
-            i_s += 1
-            i_r += 1
-
-    # For the functions that do have analogs, compare the 
-    # signatures.
-    i_s = 0
-    while i_s < len(stub_functions):
-        a = stub_functions[i_s].analog
-        if a:
-            print("Check")
-            pass
-
-        i_s += 1
-            
-    # TODO
+    # TODO: if real code has type hints should compare with stubs
 
     # Get the docstrings and report mismatches
     # TODO
-
-    # Now pair all the classes, and report ones with no
-    # analog.
-    # TODO
-
-    # For each class, report methods with no analogs.
-    # TODO
-
-    # For each method with an analog, report mismatched signatures.
-    # TODO
-
-    # For each method with an analog, report mismatched docstrings.
-    # TODO
-    print(real.keys())
         
 
 if __name__ == "__main__":
