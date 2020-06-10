@@ -6,6 +6,7 @@ import os
 import sys
 import types
 from collections import namedtuple
+from operator import itemgetter, attrgetter
 
 
 def import_dual(m: str, stub_path: str) -> Tuple:
@@ -49,7 +50,15 @@ def import_dual(m: str, stub_path: str) -> Tuple:
         _clean(m)
 
 
-Item = namedtuple('Item', 'file module name object_ done')
+class Item:
+    
+    def __init__(self, file, module, name, object_):
+        self.file = file
+        self.module = module
+        self.name = name
+        self.object_ = object_
+        self.done = False
+        self.analog = None
 
 
 def gather(name: str, m: Any):
@@ -105,13 +114,13 @@ def gather(name: str, m: Any):
                     completed.add(v)
                     submodules[k] = v
             elif inspect.isfunction(v):
-                items['f:' + k] = Item(fpath, name, k, v, False)
+                items['f:' + k] = Item(fpath, name, k, v)
             elif inspect.isclass(v):
                 members = dict()
                 items['c:' + k] = members
                 for kc, vc in inspect.getmembers(v):
                     if kc[0] != '_' and (inspect.isfunction(vc) or str(type(v)) == "<class 'property'>"):
-                        members[kc] = Item(fpath, name, kc, vc, False)
+                        members[kc] = Item(fpath, name, kc, vc)
             else:
                 pass
 
@@ -135,30 +144,38 @@ def gather(name: str, m: Any):
     return items
 
 
-def walk(tree: dict, fn, *args, delete_on_fail=False, name=None):
-    if name is None:
-        name=''
-    to_clean = []
+def walk(tree: dict, fn, *args, postproc=None, path=None):
+    """
+    Walk the object tree and apply a function.
+    If the function returns True, do not walk its children,
+    but add the object to a postproc list and if a postproc function
+    is provided, call that at the end for those objects. This gives
+    us some flexibility in both traversing the tree and collecting
+    and processing certain nodes.
+    """
+    if path is None:
+        path = ''
+    to_postproc = []
     for k, v in tree.items():
-        if fn(name, k, v, *args) and delete_on_fail:
-            to_clean.append(k)
+        if fn(path, k, v, *args):
+            to_postproc.append(k)
         elif isinstance(v, dict):
-            walk(v, fn, *args, delete_on_fail=delete_on_fail, name=name + '/' + k)
-    for k in to_clean:
-        print(f'Removing {k} from {name}')
-        tree.pop(k)
+            walk(v, fn, *args, postproc=postproc, path=path + '/' + k)
+    if postproc:
+        postproc(tree, to_postproc)
         
 
 def compare(name: str, stubpath: str):
     real, stub = import_dual(name, stubpath)
     real = gather(name, real)
     stub = gather(name, stub)
-    
-    # Find modules missing from stubs
-    
+
+    # First print out all the modules in real package where
+    # we don't have a matching module in the stub.
+
     def has_module(path, name, node, stubs):
         if not name.startswith('m:'):
-            return False
+            return
         components = path.split('/')[1:]
         components.append(name)
         for c in components:
@@ -167,13 +184,71 @@ def compare(name: str, stubpath: str):
             else:
                 modname = '.'.join([c[2:] for c in components])
                 print(f"No module {modname} in stubs")
-                # TODO: we could generate a skeleton stub file here
-                # Remove this module from further consideration
-                return True
-        return False
 
+    walk(real, has_module, stub)
 
-    walk(real, has_module, stub, delete_on_fail=True)
+    # Collect all top-level functions and then print out the
+    # ones that don't have analogs in the stubs, and vice-versa.
+
+    def collect_functions(path, name, node, functions):
+        if name.startswith('c:'):
+            return True  # Don't recurse
+        elif name.startswith('f:'):
+            functions.append(node)
+
+    real_functions = []
+    walk(real, collect_functions, real_functions)
+    real_functions = sorted(real_functions, key=attrgetter('name'))
+    stub_functions = []
+    walk(stub, collect_functions, stub_functions)
+    stub_functions = sorted(stub_functions, key=attrgetter('name'))
+
+    i_r = 0
+    i_s = 0
+    while i_r < len(real_functions) or i_s < len(stub_functions):
+        if i_r == len(real_functions) or (i_s < len(stub_functions) and real_functions[i_r].name > stub_functions[i_s].name):
+            fn = stub_functions[i_s]
+            print(f"No match for stub function {fn.module}.{fn.name}")
+            i_s += 1
+        elif i_s == len(stub_functions) or real_functions[i_r].name < stub_functions[i_s].name:
+            fn = real_functions[i_r]
+            print(f"No stub for function {fn.module}.{fn.name}")
+            i_r += 1
+        else:
+            # TODO: Check for uniqueness
+            stub_functions[i_s].analog = real_functions[i_r]            
+            real_functions[i_r].analog = stub_functions[i_s]
+            i_s += 1
+            i_r += 1
+
+    # For the functions that do have analogs, compare the 
+    # signatures.
+    i_s = 0
+    while i_s < len(stub_functions):
+        a = stub_functions[i_s].analog
+        if a:
+            print("Check")
+            pass
+
+        i_s += 1
+            
+    # TODO
+
+    # Get the docstrings and report mismatches
+    # TODO
+
+    # Now pair all the classes, and report ones with no
+    # analog.
+    # TODO
+
+    # For each class, report methods with no analogs.
+    # TODO
+
+    # For each method with an analog, report mismatched signatures.
+    # TODO
+
+    # For each method with an analog, report mismatched docstrings.
+    # TODO
     print(real.keys())
         
 
