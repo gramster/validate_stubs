@@ -119,14 +119,13 @@ def gather(name: str, m: object) -> Item:
     items: the list of discovered items
     """
     
-    def _gather(mpath: str, name: str, m: object, root: str, fpath: str, completed: set, items: dict):
+    def _gather(mpath: str, m: object, root: str, fpath: str, completed: set, items: dict):
         """
         Parameters:
         mpath: module path (e.g. pandas.core)
-        name: module name (e.g. core)
         m: module object
         root: package path
-        fpath: module path relative to root
+        fpath: module file path relative to package root directory; (may be unnecessary)
         completed: a set of modules already traversed
         items: the dict of discovered items
         """
@@ -141,20 +140,21 @@ def gather(name: str, m: object) -> Item:
             if inspect.ismodule(v):
                 if v not in completed:
                     completed.add(v)
-                    mpath = inspect.getfile(v)
-                    if mpath.startswith(root):
-                        mpath = mpath[len(root)+1:]
+                    mfpath = inspect.getfile(v)
+                    if mfpath.startswith(root):
+                        mfpath = mfpath[len(root)+1:]
                         members = dict()
-                        items[k] = Item.make_module(mpath, name, k, v, members) 
-                        _gather(name + '.' + k, k, v, root, mpath, completed, members)
+                        items[k] = Item.make_module(mfpath, mpath, k, v, members) 
+                        _gather(mpath + '.' + k, v, root, mfpath, completed, members)
             elif inspect.isfunction(v):
-                items[k] = Item.make_function(fpath, name, k, v)
+                items[k] = Item.make_function(fpath, mpath, k, v)
             elif inspect.isclass(v):
                 members = dict()
-                items[k] = Item.make_class(fpath, name, k, v, members)
+                items[k] = Item.make_class(fpath, mpath, k, v, members)
+                cmpath = mpath + '.' + k
                 for kc, vc in inspect.getmembers(v):
                     if kc[0] != '_' and (inspect.isfunction(vc) or str(type(vc)) == "<class 'property'>"):
-                        members[kc] = Item.make_function(fpath, name, kc, vc)
+                        members[kc] = Item.make_function(fpath, cmpath, kc, vc)
             else:
                 pass
 
@@ -162,7 +162,7 @@ def gather(name: str, m: object) -> Item:
     root = fpath[:fpath.rfind('/')]  # fix for windows
     members = dict()
     package = Item.make_module(fpath, '', name, m, members)
-    _gather(name, name, m, root, fpath, set(), members)
+    _gather(name, m, root, fpath, set(), members)
     return package
 
 
@@ -241,17 +241,20 @@ def compare_functions(real: List[Item], stub: List[Item], owner: Optional[str]=N
             try:
                 sc = s.object_.__code__.co_argcount
                 ac = a.object_.__code__.co_argcount
+                sa = s.object_.__code__.co_varnames
+                aa = a.object_.__code__.co_varnames
                 if sc != ac:
-                    print(f"Mismatched argument count for {s.module}.{owner}{s.name}: stub has {sc} but real has {ac}")
+                    print(f"Mismatched argument count for {s.module}.{owner}{s.name}: stub has {sc} ({sa}) but real has {ac} ({aa})")
                 else:
-                    sa = s.object_.__code__.co_varnames
-                    aa = a.object_.__code__.co_varnames
                     if sa != aa:
                         print(f"Mismatched argument names for {s.module}.{owner}{s.name}: stub has {sa} but real has {aa}")
                     else:
                          print(f"{s.module}.{owner}{s.name} passes argument checks")
             except Exception as e:
-                print(f"Failed to validate {s.module}.{owner}{s.name}: {e}")
+                if str(e).find("'property' object") >= 0:
+                    print(f"Failed to validate property {s.module}.{owner}{s.name}")
+                else:
+                    print(f"Failed to validate {s.module}.{owner}{s.name}: {e}")
 
         i_s += 1
 
@@ -288,8 +291,7 @@ def compare(name: str, stubpath: str):
             if c in stubs.children:
                 stubs = stubs.children[c]
             else:
-                modname = '.'.join(components)
-                print(f"No module {modname} in stubs")
+                print(f"No module {node.module}.{name} in stubs")
                 break
 
     walk(real.children, has_module, stub)
