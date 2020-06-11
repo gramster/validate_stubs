@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, Optional, Set, Tuple
+from typing import Any, Callable, List, Literal, NoReturn, Optional, Set, Tuple
 
 import importlib
 import inspect
@@ -225,6 +225,35 @@ def match_pairs(real: List[Item], stub: List[Item], label: str, owner: str=''):
             i_r += 1
 
 
+def compare_args(real: Item, stub: Item, owner: Optional[str] = None):
+    """
+    owner - name of owner class, if a member; else None if a top-level function
+    """
+    if owner is None:
+        owner = ''
+    else:
+        owner += '.'
+    module = stub.module
+    name = stub.name
+    try:
+        sc = stub.object_.__code__.co_argcount
+        ac = real.object_.__code__.co_argcount
+        sa = stub.object_.__code__.co_varnames
+        aa = real.object_.__code__.co_varnames
+        if sc != ac:
+            print(f"Mismatched argument count for {module}.{owner}{name}: stub has {sc} ({sa}) but real has {ac} ({aa})")
+        else:
+            if sa != aa:
+                print(f"Mismatched argument names for {module}.{owner}{name}: stub has {sa} but real has {aa}")
+            else:
+                    print(f"{module}.{owner}{name} passes argument checks")
+    except Exception as e:
+        if str(e).find("'property' object") >= 0:
+            print(f"Failed to validate property {module}.{owner}{name}")
+        else:
+            print(f"Failed to validate {module}.{owner}{name}: {e}")
+
+
 def compare_functions(real: List[Item], stub: List[Item], owner: Optional[str]=None):
     if owner is None:
         owner = ''
@@ -239,24 +268,7 @@ def compare_functions(real: List[Item], stub: List[Item], owner: Optional[str]=N
         s = stub[i_s]
         a = s.analog
         if a:
-            try:
-                sc = s.object_.__code__.co_argcount
-                ac = a.object_.__code__.co_argcount
-                sa = s.object_.__code__.co_varnames
-                aa = a.object_.__code__.co_varnames
-                if sc != ac:
-                    print(f"Mismatched argument count for {s.module}.{owner}{s.name}: stub has {sc} ({sa}) but real has {ac} ({aa})")
-                else:
-                    if sa != aa:
-                        print(f"Mismatched argument names for {s.module}.{owner}{s.name}: stub has {sa} but real has {aa}")
-                    else:
-                         print(f"{s.module}.{owner}{s.name} passes argument checks")
-            except Exception as e:
-                if str(e).find("'property' object") >= 0:
-                    print(f"Failed to validate property {s.module}.{owner}{s.name}")
-                else:
-                    print(f"Failed to validate {s.module}.{owner}{s.name}: {e}")
-
+            compare_args(a, s, owner)
         i_s += 1
 
 
@@ -275,19 +287,24 @@ def compare_classes(real: List[Item], stub: List[Item]):
         i_s += 1
 
 
-def find_class(items: List[Item], class_: str, which: str) -> Optional[Item]:
+def find_item(items: List[Item], name: str, 
+              which: Literal['stub', 'real'],
+              type_: Literal['class', 'function']) -> Optional[Item]:
+    """
+    which - whether this is 'stub' or 'real'
+    """
     i = 0
     while i < len(items):
-        if items[i].name == class_:
+        if items[i].name == name:
             return items[i]
             break
         i += 1
-    print(f"No {which} class found with name {class_}")
+    print(f"No {which} {type_} found with name {name}")
 
 
 def compare_class(real: List[Item], stub: List[Item], class_: str):
-    a = find_class(real, class_, 'real')
-    s = find_class(stub, class_, 'stub')
+    a = find_item(real, class_, 'real', 'class')
+    s = find_item(stub, class_, 'stub', 'class')
     if a is None or s is None:
         return
     real_functions, _ = collect_items(a)
@@ -327,7 +344,8 @@ def find_module(package: Item, module: str):
 
 
 def compare(name: str, stubpath: str, submodule: Optional[str] = None, 
-            class_: Optional[str] = None):
+            class_: Optional[str] = None,
+            function_: Optional[str] = None):
 
     split = name.find('.')
     if split > 0:
@@ -342,7 +360,24 @@ def compare(name: str, stubpath: str, submodule: Optional[str] = None,
     real_functions, real_classes = collect_items(real)
     stub_functions, stub_classes = collect_items(stub)
 
-    if class_ is not None:
+    if function_ is not None:
+        if class_ is not None:
+            ac = find_item(real_classes, class_, 'real', 'class')
+            sc = find_item(stub_classes, class_, 'stub', 'class')
+            if ac is not None and sc is not None:
+                real_functions, _ = collect_items(ac)
+                stub_functions, _ = collect_items(sc)
+                af = find_item(real_functions, function_, 'real', 'function')                
+                sf = find_item(stub_functions, function_, 'stub', 'function')
+                if af is not None and sf is not None:
+                    compare_args(af, sf, class_)
+        else:
+            # Top-level function
+            af = find_item(real_functions, function_, 'real', 'function')
+            sf = find_item(stub_functions, function_, 'stub', 'function')
+            if af is not None and sf is not None:
+                compare_args(af, sf)
+    elif class_ is not None:
         compare_class(real_classes, stub_classes, class_=class_)
     elif submodule is not None:
         s = find_module(stub, submodule)
@@ -366,6 +401,8 @@ def compare(name: str, stubpath: str, submodule: Optional[str] = None,
 
 if __name__ == "__main__":
     #compare('pandas.core', '/Users/grwheele/repos/typings')
-    compare('pandas', '/Users/grwheele/repos/typings', class_='DataFrame')
+    #compare('pandas', '/Users/grwheele/repos/typings', class_='DataFrame', function_='groupby')
+    compare('pandas', '/Users/grwheele/repos/typings', function_='read_hdf')
+
 
     
