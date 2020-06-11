@@ -1,3 +1,17 @@
+"""Validate Stubs.
+
+Usage:
+  validate_stubs <stubpath> <package> [--class=<c>] [--function=<f>]
+  validate_stubs -h | --help
+  validate_stubs --version
+
+Options:
+  -h --help       Show this screen.
+  --version       Show version.
+  --function=<f>  Restrict to the named function (or method if used with --class).
+  --class=<c>     Restrict to the named class.
+  """
+
 from typing import Any, Callable, List, Literal, NoReturn, Optional, Set, Tuple
 
 import importlib
@@ -8,6 +22,7 @@ import types
 from collections import namedtuple
 from operator import itemgetter, attrgetter
 from enum import Enum
+import docopt
 
 
 def import_dual(m: str, stub_path: str) -> Tuple:
@@ -400,9 +415,6 @@ def compare(name: str, stubpath: str, submodule: Optional[str] = None,
         
 
 if __name__ == "__main__":
-    #compare('pandas.core', '/Users/grwheele/repos/typings')
-    #compare('pandas', '/Users/grwheele/repos/typings', class_='DataFrame', function_='groupby')
-    compare('pandas', '/Users/grwheele/repos/typings', function_='read_hdf')
-
-
+    args = docopt.docopt(__doc__, version='Validate Stubs 0.1')
+    compare(args['<package>'], args['<stubpath>'], class_=args['--class'], function_=args['--function'])
     
