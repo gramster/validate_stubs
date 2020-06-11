@@ -293,31 +293,47 @@ def compare_class(real: List[Item], stub: List[Item], class_: str):
     real_functions, _ = collect_items(a)
     stub_functions, _ = collect_items(s)
     compare_functions(real_functions, stub_functions, s.name)
-
+        
 
 def find_mismatched_modules(real: Item, stub: Item):
     """
     Print out all the modules in real package where
-    we don't have a matching module in the stub.
+    we don't have a matching module in the stubs.
     """
 
-    def has_module(path, name, node, stubs):
+    def has_module(path: str, name: str, node: Item, stub: Item):
         if not node.ismodule():
             return
         components = path.split('/')[1:]
         components.append(name)
         for c in components:
-            if c in stubs.children:
-                stubs = stubs.children[c]
+            if c in stub.children:
+                stubs = stub.children[c]
             else:
                 print(f"No module {node.module}.{name} in stubs")
                 break
-        
+
     walk(real.children, has_module, stub)
+
+
+def find_module(package: Item, module: str):
+    module = module.split('.')[1:]
+    root = package
+    for m in module:
+        if m not in root.children:
+            return
+        root = root.children[m]
+    return root
 
 
 def compare(name: str, stubpath: str, submodule: Optional[str] = None, 
             class_: Optional[str] = None):
+
+    split = name.find('.')
+    if split > 0:
+        submodule = name
+        name = name[:split]
+
     real, stub = import_dual(name, stubpath)
     real = gather(name, real)
     stub = gather(name, stub)
@@ -329,12 +345,18 @@ def compare(name: str, stubpath: str, submodule: Optional[str] = None,
     if class_ is not None:
         compare_class(real_classes, stub_classes, class_=class_)
     elif submodule is not None:
-        pass
+        s = find_module(stub, submodule)
+        if s is None:
+            print(f"No stub {submodule} found")
+        else:
+            a = find_module(real, submodule)
+            if a is None:
+                print(f"No real module {submodule} found")
+        # TODO: add the other checks but limit to this submodule
     else:
-        find_mismatched_modules(real, stub)
+        find_mismatched_modules(real, stub, 'stubs')
         compare_functions(real_functions, stub_functions)
         compare_classes(real_classes, stub_classes)
-
   
     # TODO: if real code has type hints should compare with stubs
 
@@ -343,6 +365,7 @@ def compare(name: str, stubpath: str, submodule: Optional[str] = None,
         
 
 if __name__ == "__main__":
+    #compare('pandas.core', '/Users/grwheele/repos/typings')
     compare('pandas', '/Users/grwheele/repos/typings', class_='DataFrame')
 
     
