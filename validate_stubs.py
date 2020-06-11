@@ -174,6 +174,7 @@ def walk(tree: dict, fn: Callable, *args, postproc: Callable=None, path=None):
     is provided, call that at the end for those objects. This gives
     us some flexibility in both traversing the tree and collecting
     and processing certain nodes.
+    TODO: see if we ever use the postproc facility and remove it if not.
     """
     if path is None:
         path = ''
@@ -259,7 +260,7 @@ def compare_functions(real: List[Item], stub: List[Item], owner: Optional[str]=N
         i_s += 1
 
 
-def compare_classes(real, stub, owner=None):
+def compare_classes(real: List[Item], stub: List[Item]):
     match_pairs(real, stub, 'class')
     # For the classes that do have analogs, compare the 
     # methods.
@@ -274,13 +275,31 @@ def compare_classes(real, stub, owner=None):
         i_s += 1
 
 
-def compare(name: str, stubpath: str):
-    real, stub = import_dual(name, stubpath)
-    real = gather(name, real)
-    stub = gather(name, stub)
+def find_class(items: List[Item], class_: str, which: str) -> Optional[Item]:
+    i = 0
+    while i < len(items):
+        if items[i].name == class_:
+            return items[i]
+            break
+        i += 1
+    print(f"No {which} class found with name {class_}")
 
-    # First print out all the modules in real package where
-    # we don't have a matching module in the stub.
+
+def compare_class(real: List[Item], stub: List[Item], class_: str):
+    a = find_class(real, class_, 'real')
+    s = find_class(stub, class_, 'stub')
+    if a is None or s is None:
+        return
+    real_functions, _ = collect_items(a)
+    stub_functions, _ = collect_items(s)
+    compare_functions(real_functions, stub_functions, s.name)
+
+
+def find_mismatched_modules(real: Item, stub: Item):
+    """
+    Print out all the modules in real package where
+    we don't have a matching module in the stub.
+    """
 
     def has_module(path, name, node, stubs):
         if not node.ismodule():
@@ -293,17 +312,30 @@ def compare(name: str, stubpath: str):
             else:
                 print(f"No module {node.module}.{name} in stubs")
                 break
-
+        
     walk(real.children, has_module, stub)
 
-    # Collect all top-level functions and then print out the
-    # ones that don't have analogs in the stubs, and vice-versa.
 
+def compare(name: str, stubpath: str, submodule: Optional[str] = None, 
+            class_: Optional[str] = None):
+    real, stub = import_dual(name, stubpath)
+    real = gather(name, real)
+    stub = gather(name, stub)
+
+    # Collect the top level functions and classes
     real_functions, real_classes = collect_items(real)
     stub_functions, stub_classes = collect_items(stub)
-    compare_functions(real_functions, stub_functions)
-    compare_classes(real_classes, stub_classes)
 
+    if class_ is not None:
+        compare_class(real_classes, stub_classes, class_=class_)
+    elif submodule is not None:
+        pass
+    else:
+        find_mismatched_modules(real, stub)
+        compare_functions(real_functions, stub_functions)
+        compare_classes(real_classes, stub_classes)
+
+  
     # TODO: if real code has type hints should compare with stubs
 
     # Get the docstrings and report mismatches
@@ -311,6 +343,6 @@ def compare(name: str, stubpath: str):
         
 
 if __name__ == "__main__":
-    compare('pandas', '/Users/grwheele/repos/typings')
+    compare('pandas', '/Users/grwheele/repos/typings', class_='DataFrame')
 
     
