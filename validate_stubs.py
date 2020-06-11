@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Set, Tuple
+from typing import Any, Callable, List, Optional, Set, Tuple
 
 import importlib
 import inspect
@@ -7,6 +7,7 @@ import sys
 import types
 from collections import namedtuple
 from operator import itemgetter, attrgetter
+from enum import Enum
 
 
 def import_dual(m: str, stub_path: str) -> Tuple:
@@ -52,16 +53,63 @@ def import_dual(m: str, stub_path: str) -> Tuple:
 
 class Item:
     
-    def __init__(self, file, module, name, object_):
+    class ItemType(Enum):
+        MODULE = 1
+        CLASS = 2
+        FUNCTION = 3
+        PROPERTY = 4
+
+    def __init__(self, file: str, module: str, name: str, object_: object, type_: ItemType, children: dict=None):
         self.file = file
         self.module = module
         self.name = name
         self.object_ = object_
+        self.type_ = type_
+        self.children = children
         self.done = False
         self.analog = None
 
+    def ismodule(self):
+        return self.type_ == Item.ItemType.MODULE
 
-def gather(name: str, m: Any):
+    def isclass(self):
+        return self.type_ == Item.ItemType.CLASS
+
+    def isfunction(self):
+        return self.type_ == Item.ItemType.FUNCTION
+
+    @staticmethod
+    def make_function(file: str, module: str, name: str, object_: object):
+        return Item(file, module, name, object_, Item.ItemType.FUNCTION)
+
+    @staticmethod
+    def make_class(file: str, module: str, name: str, object_: object, children:dict):
+        return Item(file, module, name, object_, Item.ItemType.CLASS, children)
+
+    @staticmethod
+    def make_module(file: str, module: str, name: str, object_: object, children:dict):
+        return Item(file, module, name, object_, Item.ItemType.MODULE, children)
+
+
+def isfrompackage(v: object, path: str) -> bool:
+    # Try to ensure the object lives below the root path and is not 
+    # imported from elsewhere.
+    try:
+        f = inspect.getfile(v)
+        return f.startswith(path)
+    except TypeError:  # builtins or non-modules; for the latter we return True for now
+        return not inspect.ismodule(v)
+
+
+def isfrommodule(v: object, module: str, default: bool=True) -> bool:
+    try:
+        # Make sure it came from this module
+        return v.__dict__['__module__'] == module
+    except:
+        return default
+
+
+def gather(name: str, m: object) -> Item:
     """
     Parameters:
     name: module name
@@ -71,7 +119,7 @@ def gather(name: str, m: Any):
     items: the list of discovered items
     """
     
-    def _gather(mpath, name, m, root, fpath, completed, items):
+    def _gather(mpath: str, name: str, m: object, root: str, fpath: str, completed: set, items: dict):
         """
         Parameters:
         mpath: module path (e.g. pandas.core)
@@ -80,71 +128,45 @@ def gather(name: str, m: Any):
         root: package path
         fpath: module path relative to root
         completed: a set of modules already traversed
-        items: the list of discovered items
+        items: the dict of discovered items
         """
 
-        submodules = dict()
         for k, v in m.__dict__.items():
 
-            if inspect.isbuiltin(v):
+            if not (inspect.isclass(v) or inspect.isfunction(v) or inspect.ismodule(v)):
                 continue
-            try:
-                # Make sure it came from this module
-                if v.__dict__['__module__'] != mpath:
-                    continue
-            except:
-                pass
-
-            # Try to ensure the object lives below the root path and is not 
-            # imported from elsewhere.
-            try:
-                f = inspect.getfile(v)
-                if not f.startswith(root):
-                    continue
-            except:
-                #print(f"No file for {k}")
-                pass
-
-            t = type(v)
-
-            if k[0] == '_':
+            if inspect.isbuiltin(v) or k[0] == '_' or not isfrompackage(v, root) or not isfrommodule(v, mpath):
                 continue
-            elif inspect.ismodule(v):
+
+            if inspect.ismodule(v):
                 if v not in completed:
                     completed.add(v)
-                    submodules[k] = v
+                    mpath = inspect.getfile(v)
+                    if mpath.startswith(root):
+                        mpath = mpath[len(root)+1:]
+                        members = dict()
+                        items[k] = Item.make_module(mpath, name, k, v, members) 
+                        _gather(name + '.' + k, k, v, root, mpath, completed, members)
             elif inspect.isfunction(v):
-                items['f:' + k] = Item(fpath, name, k, v)
+                items[k] = Item.make_function(fpath, name, k, v)
             elif inspect.isclass(v):
                 members = dict()
-                items['c:' + k] = members
+                items[k] = Item.make_class(fpath, name, k, v, members)
                 for kc, vc in inspect.getmembers(v):
-                    if kc[0] != '_' and (inspect.isfunction(vc) or str(type(v)) == "<class 'property'>"):
-                        members[kc] = Item(fpath, name, kc, vc)
+                    if kc[0] != '_' and (inspect.isfunction(vc) or str(type(vc)) == "<class 'property'>"):
+                        members[kc] = Item.make_function(fpath, name, kc, vc)
             else:
-                pass
-
-        for k, v in submodules.items():
-            try:        
-                fpath = inspect.getfile(v)  # v.__dict__['__file__']
-                if not fpath.startswith(root):
-                    continue
-                fpath = fpath[len(root)+1:]
-                members = dict()
-                items['m:' + k] = members 
-                _gather(name + '.' + k, k, v, root, fpath, completed, members)
-            except:
                 pass
 
     fpath = m.__dict__['__file__']
     root = fpath[:fpath.rfind('/')]  # fix for windows
     members = dict()
-    items = {'m:' + name: members}
+    package = Item.make_module(fpath, '', name, m, members)
     _gather(name, name, m, root, fpath, set(), members)
-    return items
+    return package
 
 
-def walk(tree: dict, fn, *args, postproc=None, path=None):
+def walk(tree: dict, fn: Callable, *args, postproc: Callable=None, path=None):
     """
     Walk the object tree and apply a function.
     If the function returns True, do not walk its children,
@@ -159,30 +181,30 @@ def walk(tree: dict, fn, *args, postproc=None, path=None):
     for k, v in tree.items():
         if fn(path, k, v, *args):
             to_postproc.append(k)
-        elif isinstance(v, dict):
-            walk(v, fn, *args, postproc=postproc, path=path + '/' + k)
+        elif v.children:
+            walk(v.children, fn, *args, postproc=postproc, path=path + '/' + k)
     if postproc:
         postproc(tree, to_postproc)
         
 
-def collect_items(root):
+def collect_items(root: Item) -> Tuple[List[Item], List[Item]]:
 
     def _collect(path, name, node, functions, classes):
-        if name.startswith('c:'):
+        if node.isclass():
             classes.append(node)
             return True  # Don't recurse
-        elif name.startswith('f:'):
+        elif node.isfunction():
             functions.append(node)
 
     functions = []
     classes = []
-    walk(root, _collect, functions, classes)
+    walk(root.children, _collect, functions, classes)
     functions = sorted(functions, key=attrgetter('name'))
-    #classes = sorted(classes, key=attrgetter('name'))
+    classes = sorted(classes, key=attrgetter('name'))
     return functions, classes
 
 
-def match_pairs(real, stub, label, owner=''):
+def match_pairs(real: List[Item], stub: List[Item], label: str, owner: str=''):
     i_r = 0
     i_s = 0
     while i_r < len(real) or i_s < len(stub):
@@ -202,7 +224,7 @@ def match_pairs(real, stub, label, owner=''):
             i_r += 1
 
 
-def compare_functions(real, stub, owner=None):
+def compare_functions(real: List[Item], stub: List[Item], owner: Optional[str]=None):
     if owner is None:
         owner = ''
     else:
@@ -242,9 +264,11 @@ def compare_classes(real, stub, owner=None):
     while i_s < len(stub):
         s = stub[i_s]
         a = s.analog
-        real_functions, _ = collect_items(a)
-        stub_functions, _ = collect_items(s)
-        compare_functions(real_functions, stub_functions, s.name)
+        if a:
+            real_functions, _ = collect_items(a)
+            stub_functions, _ = collect_items(s)
+            compare_functions(real_functions, stub_functions, s.name)
+        i_s += 1
 
 
 def compare(name: str, stubpath: str):
@@ -256,18 +280,19 @@ def compare(name: str, stubpath: str):
     # we don't have a matching module in the stub.
 
     def has_module(path, name, node, stubs):
-        if not name.startswith('m:'):
+        if not node.ismodule():
             return
         components = path.split('/')[1:]
         components.append(name)
         for c in components:
-            if c in stubs:
-                stubs = stubs[c]
+            if c in stubs.children:
+                stubs = stubs.children[c]
             else:
-                modname = '.'.join([c[2:] for c in components])
+                modname = '.'.join(components)
                 print(f"No module {modname} in stubs")
+                break
 
-    walk(real, has_module, stub)
+    walk(real.children, has_module, stub)
 
     # Collect all top-level functions and then print out the
     # ones that don't have analogs in the stubs, and vice-versa.
@@ -275,7 +300,7 @@ def compare(name: str, stubpath: str):
     real_functions, real_classes = collect_items(real)
     stub_functions, stub_classes = collect_items(stub)
     compare_functions(real_functions, stub_functions)
-    #compare_classes(real_classes, stub_classes)
+    compare_classes(real_classes, stub_classes)
 
     # TODO: if real code has type hints should compare with stubs
 
