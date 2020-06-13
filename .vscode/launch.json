@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["/Users/grwheele/repos/typings", "pandas", "--class=DataFrame", "--function=groupby"]
+            "args": ["/Users/grwheele/repos/typings", "pandas", "--class=DataFrame"]
         }
     ]
 }

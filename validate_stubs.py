@@ -12,7 +12,7 @@ Options:
   --class=<c>     Restrict to the named class.
   """
 
-from typing import Any, Callable, List, Literal, NoReturn, Optional, Set, Tuple
+from typing import Any, Callable, List, Literal, NoReturn, Optional, Set, Tuple, _overload_dummy
 
 import importlib
 import inspect
@@ -162,6 +162,8 @@ def gather(name: str, m: object) -> Item:
                         items[k] = Item.make_module(mfpath, mpath, k, v, members) 
                         _gather(mpath + '.' + k, v, root, mfpath, completed, members)
             elif inspect.isfunction(v):
+                if k in items:
+                    print(f'{name} already has a function {k}')
                 items[k] = Item.make_function(fpath, mpath, k, v)
             elif inspect.isclass(v):
                 members = dict()
@@ -246,25 +248,49 @@ def compare_args(real: Item, stub: Item, owner: Optional[str] = None):
     """
     if owner is None:
         owner = ''
-    else:
+    elif owner and owner[-1] != '.':
         owner += '.'
     module = stub.module
     name = stub.name
+    if stub.object_ == _overload_dummy:
+        print(f"Can't validate @overloaded function {module}.{owner}{name}")
+        return
+
     try:
         sc = stub.object_.__code__.co_argcount
         ac = real.object_.__code__.co_argcount
-        sa = stub.object_.__code__.co_varnames
-        aa = real.object_.__code__.co_varnames
-        if sc != ac:
-            print(f"Mismatched argument count for {module}.{owner}{name}: stub has {sc} ({sa}) but real has {ac} ({aa})")
-        else:
-            if sa != aa:
-                print(f"Mismatched argument names for {module}.{owner}{name}: stub has {sa} but real has {aa}")
+        sa = inspect.signature(stub.object_)
+        sn = list(sa.parameters.keys())
+        aa = inspect.signature(real.object_)
+        an = list(aa.parameters.keys())
+        diff = ''
+
+        for i, p in enumerate(sn):
+            if i >= len(an):
+                diff += f'\tExtra stub parameter {p}\n'
+            elif p != an[i]:
+                diff += f'\tMismatched parameter names at position {i}: {p} != {an[i]}\n'
             else:
-                    print(f"{module}.{owner}{name} passes argument checks")
+                sp = sa.parameters[p].kind
+                ap = aa.parameters[p].kind
+                if sp != ap:
+                    diff += f'\tMismatched parameter types at position {i} {p}: {sp.description} != {ap.description}\n'
+
+        if len(an) > len(sn):
+            i = len(sn)
+            while i < len(an):
+                diff += f'\tExtra real parameter {an[i]}\n'
+                i += 1
+
+        if diff:
+            print(f"Mismatched arguments for {module}.{owner}{name}:\n{diff}")
+        else:
+            print(f"{module}.{owner}{name} passes argument checks")
+
     except Exception as e:
         if str(e).find("'property' object") >= 0:
-            print(f"Failed to validate property {module}.{owner}{name}")
+            pass
+            #print(f"Failed to validate property {module}.{owner}{name}")
         else:
             print(f"Failed to validate {module}.{owner}{name}: {e}")
 
@@ -272,7 +298,7 @@ def compare_args(real: Item, stub: Item, owner: Optional[str] = None):
 def compare_functions(real: List[Item], stub: List[Item], owner: Optional[str]=None):
     if owner is None:
         owner = ''
-    else:
+    elif owner and owner[-1] != '.':
         owner += '.'
     match_pairs(real, stub, 'function', owner)
 
@@ -404,7 +430,7 @@ def compare(name: str, stubpath: str, submodule: Optional[str] = None,
                 print(f"No real module {submodule} found")
         # TODO: add the other checks but limit to this submodule
     else:
-        find_mismatched_modules(real, stub, 'stubs')
+        find_mismatched_modules(real, stub)
         compare_functions(real_functions, stub_functions)
         compare_classes(real_classes, stub_classes)
   
