@@ -168,10 +168,9 @@ def gather(name: str, m: object) -> Item:
             elif inspect.isclass(v):
                 members = dict()
                 items[k] = Item.make_class(fpath, mpath, k, v, members)
-                cmpath = mpath + '.' + k
                 for kc, vc in inspect.getmembers(v):
                     if kc[0] != '_' and (inspect.isfunction(vc) or str(type(vc)) == "<class 'property'>"):
-                        members[kc] = Item.make_function(fpath, cmpath, kc, vc)
+                        members[kc] = Item.make_function(fpath, mpath, kc, vc)
             else:
                 pass
 
