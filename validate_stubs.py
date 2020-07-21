@@ -23,6 +23,24 @@ from collections import namedtuple
 from operator import itemgetter, attrgetter
 from enum import Enum
 import docopt
+import typing as _typing
+
+
+overloads = {}
+
+
+def my_overload(func):
+    key = func.__module__ + '.' + func.__name__
+    if key not in overloads:
+        fn = lambda *args, **kwds: _overload_dummy(args, kwds)
+        overloads[key] = fn
+        fn.__overloads__ = [func]
+    else:
+        overloads[key].__overloads__.append(func)
+    return overloads[key]
+
+
+_typing.overload = my_overload
 
 
 def import_dual(m: str, stub_path: str) -> Tuple:
@@ -251,8 +269,9 @@ def compare_args(real: Item, stub: Item, owner: Optional[str] = None):
         owner += '.'
     module = stub.module
     name = stub.name
-    if stub.object_ == _overload_dummy:
-        print(f"Can't validate @overloaded function {module}.{owner}{name}")
+    #if stub.object_ == _overload_dummy:
+    if hasattr(stub.object_, '__overloads__'):
+        print(f"Can't validate @overloaded function {module}.{owner}{name} with {len(stub.object_.__overloads__)} overloads")
         return
 
     try:
@@ -443,3 +462,7 @@ if __name__ == "__main__":
     args = docopt.docopt(__doc__, version='Validate Stubs 0.1')
     compare(args['<package>'], args['<stubpath>'], class_=args['--class'], function_=args['--function'])
     
+
+import pandas as pd
+
+pd.
