@@ -1,7 +1,9 @@
+#!/bin/python
+
 """Validate Stubs.
 
 Usage:
-  validate_stubs <stubpath> <package> [--class=<c>] [--function=<f>]
+  validate_stubs <package> [--path=<stubpath>] [--class=<c>] [--function=<f>]
   validate_stubs -h | --help
   validate_stubs --version
 
@@ -402,7 +404,7 @@ def find_module(package: Item, module: str):
     return root
 
 
-def compare(name: str, stubpath: str, submodule: Optional[str] = None, 
+def compare(name: str, stubpath: Optional[str] = None, submodule: Optional[str] = None, 
             class_: Optional[str] = None,
             function_: Optional[str] = None):
 
@@ -410,6 +412,9 @@ def compare(name: str, stubpath: str, submodule: Optional[str] = None,
     if split > 0:
         submodule = name
         name = name[:split]
+
+    if stubpath is None:
+        stubpath = '.'
 
     real, stub = import_dual(name, stubpath)
     real = gather(name, real)
@@ -460,9 +465,6 @@ def compare(name: str, stubpath: str, submodule: Optional[str] = None,
 
 if __name__ == "__main__":
     args = docopt.docopt(__doc__, version='Validate Stubs 0.1')
-    compare(args['<package>'], args['<stubpath>'], class_=args['--class'], function_=args['--function'])
+    compare(args['<package>'], args['--path'], class_=args['--class'], function_=args['--function'])
     
 
-import pandas as pd
-
-pd.
